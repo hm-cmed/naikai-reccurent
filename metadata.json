@@ -1,0 +1,6 @@
+{
+  "name": "臨床シナリオ学習チューター",
+  "description": "スライド教材を見ながら臨床推論の回答を入力し、AIチューターによる形成的フィードバックと〇×クイズ、全体総括を行う学習支援システム",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
