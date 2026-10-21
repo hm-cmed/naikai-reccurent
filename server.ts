@@ -5,7 +5,51 @@ import { GoogleGenAI } from '@google/genai';
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// ---------------- セキュリティ ----------------
+// 公開したサーバーで Gemini の利用枠を使い切られたり、大きなデータを送り付けられたりしないための制限
+app.disable('x-powered-by');
+app.set('trust proxy', 1); // Cloud Run など、プロキシ1段の後ろで動かす前提（利用者の IP を正しく得るため）
+app.use(express.json({ limit: '100kb' }));
+
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join('; ');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // 開発中（Vite）はインラインのスクリプトを使うため、本番だけ CSP を付ける
+  if (process.env.NODE_ENV === 'production') res.setHeader('Content-Security-Policy', CSP);
+  next();
+});
+
+// API の呼び出し回数を、利用者（IP アドレス）ごとに 1 分あたり API_RATE_LIMIT_PER_MIN 回（既定 300 回）までにする
+// 学内のように大勢が同じ IP アドレスから使う場合を考えて、多めにしている
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = Number(process.env.API_RATE_LIMIT_PER_MIN) || 300;
+const apiHits = new Map<string, { count: number; start: number }>();
+app.use('/api', (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || 'unknown';
+  const hit = apiHits.get(key);
+  if (!hit || now - hit.start > RATE_WINDOW_MS) {
+    apiHits.set(key, { count: 1, start: now });
+  } else if (++hit.count > RATE_MAX) {
+    res.setHeader('Retry-After', '60');
+    return res.status(429).json({ error: 'アクセスが集中しています。1分ほど待ってから、もう一度お試しください。' });
+  }
+  if (apiHits.size > 5000) {
+    for (const [k, v] of apiHits) if (now - v.start > RATE_WINDOW_MS) apiHits.delete(k);
+  }
+  next();
+});
 
 // Scenario task and rubric fallback definitions for self-contained server execution
 interface ServerRubric {
